@@ -449,7 +449,7 @@ class TranslationResponse(BaseModel):
 @app.post("/api/translate-guidance", response_model=TranslationResponse)
 @limiter.limit("15/minute")
 async def translate_guidance(request: Request, translation_request: TranslationRequest):
-    """Translates troubleshooting guidance to Tamil or Telugu using LLM."""
+    """Translates troubleshooting guidance to Tamil or Telugu using DeepSeek."""
     try:
         guidance = sanitize_user_input(translation_request.guidance)
         target_language = translation_request.target_language.lower()
@@ -481,8 +481,9 @@ ORIGINAL TROUBLESHOOTING STEPS:
 
 Provide ONLY the translated troubleshooting steps in {language_info[target_language]}, maintaining the numbered format."""
 
+        # Use guidance model for translation (DeepSeek works well for this)
         response_text = await llm_service.call_llm(
-            task_type="translate",
+            task_type="guidance",
             messages=[{"role": "user", "content": translation_prompt}],
         )
 
