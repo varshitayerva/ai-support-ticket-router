@@ -10,13 +10,13 @@ function ResultsPage() {
     const [finalEmail, setFinalEmail] = useState(null);
     const [judgeResult, setJudgeResult] = useState(null);
     const [analysisJudge, setAnalysisJudge] = useState(null);
-    const [loading, setLoading] = useState({ guidance: false, email: false, judge: false, analysisJudge: false });
-    const [error, setError] = useState({ guidance: '', email: '', judge: '', analysisJudge: '' });
+    const [translatedGuidance, setTranslatedGuidance] = useState(null);
+    const [translationLanguage, setTranslationLanguage] = useState(null);
+    const [loading, setLoading] = useState({ guidance: false, email: false, judge: false, analysisJudge: false, translate: false });
+    const [error, setError] = useState({ guidance: '', email: '', judge: '', analysisJudge: '', translate: '' });
 
     useEffect(() => {
         if (!analysis) {
-            // Redirect or show error if state is missing
-            // For simplicity, we'll just log it. A real app might navigate back.
             console.error("No analysis data found. Please start from the home page.");
         }
     }, [analysis]);
@@ -43,6 +43,8 @@ function ResultsPage() {
         setLoading(prev => ({ ...prev, guidance: true }));
         setError(prev => ({ ...prev, guidance: '' }));
         setAnalysisJudge(null);
+        setTranslatedGuidance(null);
+        setTranslationLanguage(null);
 
         try {
             const analysisValidation = await fetchJudgeAnalysis();
@@ -60,6 +62,27 @@ function ResultsPage() {
             setError(prev => ({ ...prev, guidance: 'Failed to fetch guidance.' }));
         } finally {
             setLoading(prev => ({ ...prev, guidance: false }));
+        }
+    };
+
+    const translateGuidance = async (language) => {
+        if (!guidance) {
+            setError(prev => ({ ...prev, translate: 'Please generate guidance first.' }));
+            return;
+        }
+        setLoading(prev => ({ ...prev, translate: true }));
+        setError(prev => ({ ...prev, translate: '' }));
+        try {
+            const response = await axios.post('http://localhost:8000/api/translate-guidance', {
+                guidance,
+                target_language: language
+            });
+            setTranslatedGuidance(response.data.translated_guidance);
+            setTranslationLanguage(language);
+        } catch (err) {
+            setError(prev => ({ ...prev, translate: `Failed to translate to ${language}.` }));
+        } finally {
+            setLoading(prev => ({ ...prev, translate: false }));
         }
     };
 
@@ -167,8 +190,64 @@ function ResultsPage() {
 
                 {guidance && (
                     <div className="card">
-                        <h3>{guidanceButtonText.replace('Generate ', '')}</h3>
-                        <pre>{guidance}</pre>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+                            <h3 style={{ margin: 0 }}>{guidanceButtonText.replace('Generate ', '')}</h3>
+                            <div style={{ display: 'flex', gap: '0.5rem' }}>
+                                <button
+                                    onClick={() => translateGuidance('tamil')}
+                                    disabled={loading.translate}
+                                    style={{
+                                        padding: '0.5rem 1rem',
+                                        fontSize: '0.9em',
+                                        backgroundColor: translationLanguage === 'tamil' ? '#3498db' : '#95a5a6',
+                                        color: 'white',
+                                        border: 'none',
+                                        borderRadius: '4px',
+                                        cursor: loading.translate ? 'not-allowed' : 'pointer',
+                                        opacity: loading.translate ? 0.6 : 1
+                                    }}
+                                    title="Translate to Tamil (தமிழ்)"
+                                >
+                                    {loading.translate && translationLanguage === 'tamil' ? '⏳ Tamil...' : '🇮🇳 Tamil'}
+                                </button>
+                                <button
+                                    onClick={() => translateGuidance('telugu')}
+                                    disabled={loading.translate}
+                                    style={{
+                                        padding: '0.5rem 1rem',
+                                        fontSize: '0.9em',
+                                        backgroundColor: translationLanguage === 'telugu' ? '#3498db' : '#95a5a6',
+                                        color: 'white',
+                                        border: 'none',
+                                        borderRadius: '4px',
+                                        cursor: loading.translate ? 'not-allowed' : 'pointer',
+                                        opacity: loading.translate ? 0.6 : 1
+                                    }}
+                                    title="Translate to Telugu (తెలుగు)"
+                                >
+                                    {loading.translate && translationLanguage === 'telugu' ? '⏳ Telugu...' : '🇮🇳 Telugu'}
+                                </button>
+                            </div>
+                        </div>
+                        {error.translate && <p className="error-box" style={{ marginBottom: '1rem' }}>{error.translate}</p>}
+                        <pre style={{ backgroundColor: translatedGuidance && translationLanguage ? '#f0f8ff' : 'white' }}>
+                            {translatedGuidance && translationLanguage ? (
+                                <>
+                                    <strong style={{ color: '#3498db' }}>
+                                        {translationLanguage === 'tamil' ? 'தமிழ் மொழி (Tamil)' : 'తెలుగు (Telugu)'}
+                                    </strong>
+                                    <br /><br />
+                                    {translatedGuidance}
+                                    <br /><br />
+                                    <hr style={{ border: '1px solid #ddd', margin: '1rem 0' }} />
+                                    <strong style={{ color: '#666' }}>English (Original)</strong>
+                                    <br /><br />
+                                    {guidance}
+                                </>
+                            ) : (
+                                guidance
+                            )}
+                        </pre>
                     </div>
                 )}
 

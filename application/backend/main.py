@@ -436,6 +436,70 @@ class EmailRequest(BaseModel):
     analysis: TicketAnalysis
     guidance: str
 
+class TranslationRequest(BaseModel):
+    guidance: str
+    target_language: str = Field(..., description="Target language: 'tamil' or 'telugu'")
+
+class TranslationResponse(BaseModel):
+    original_guidance: str
+    translated_guidance: str
+    target_language: str
+    confidence: float
+
+@app.post("/api/translate-guidance", response_model=TranslationResponse)
+@limiter.limit("15/minute")
+async def translate_guidance(request: Request, translation_request: TranslationRequest):
+    """Translates troubleshooting guidance to Tamil or Telugu using LLM."""
+    try:
+        guidance = sanitize_user_input(translation_request.guidance)
+        target_language = translation_request.target_language.lower()
+
+        if target_language not in ['tamil', 'telugu']:
+            raise HTTPException(
+                status_code=400,
+                detail="target_language must be 'tamil' or 'telugu'"
+            )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    llm_service = get_llm_service()
+
+    try:
+        # Create translation prompt
+        language_info = {
+            'tamil': 'Tamil (தமிழ்)',
+            'telugu': 'Telugu (తెలుగు)'
+        }
+
+        translation_prompt = f"""Translate the following troubleshooting steps to {language_info[target_language]}.
+Keep the format as a numbered list.
+Maintain technical accuracy and clarity.
+Make it easy to understand for customers who speak {language_info[target_language]}.
+
+ORIGINAL TROUBLESHOOTING STEPS:
+{guidance}
+
+Provide ONLY the translated troubleshooting steps in {language_info[target_language]}, maintaining the numbered format."""
+
+        response_text = await llm_service.call_llm(
+            task_type="translate",
+            messages=[{"role": "user", "content": translation_prompt}],
+        )
+
+        translated_text = llm_service.extract_text_response(response_text)
+
+        return TranslationResponse(
+            original_guidance=guidance,
+            translated_guidance=translated_text,
+            target_language=target_language,
+            confidence=0.9
+        )
+    except OpenAIError as e:
+        raise HTTPException(status_code=503, detail=f"AI service unavailable: {e}")
+    except Exception as e:
+        llm_logger.logger.error(f"Translation error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to translate guidance.")
+
 @app.post("/api/email")
 @limiter.limit("15/minute")
 async def get_email(request: Request, email_request: EmailRequest):
