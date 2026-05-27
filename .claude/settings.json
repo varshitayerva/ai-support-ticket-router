@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run *)",
+      "Bash(pkill -f \"vite\")",
+      "Bash(rm -rf node_modules/.vite)",
+      "Bash(curl -s http://localhost:5173)",
+      "Bash(npm install *)"
+    ]
+  }
+}
