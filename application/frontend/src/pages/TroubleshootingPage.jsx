@@ -34,6 +34,10 @@ function TroubleshootingPage() {
   const [copied, setCopied] = useState(false);
   const [editModalOpen, setEditModalOpen] = useState(false);
   const [currentTicket, setCurrentTicket] = useState(ticket);
+  const [translatedGuidance, setTranslatedGuidance] = useState(null);
+  const [translationLanguage, setTranslationLanguage] = useState(null);
+  const [translating, setTranslating] = useState(false);
+  const [translationError, setTranslationError] = useState('');
 
   React.useEffect(() => {
     if (!analysis) {
@@ -103,6 +107,30 @@ function TroubleshootingPage() {
         setShowError(true);
         setLoading(false);
       });
+  };
+
+  const handleTranslate = async (language) => {
+    if (!guidance?.raw) {
+      setTranslationError('Please generate guidance first.');
+      return;
+    }
+
+    setTranslating(true);
+    setTranslationError('');
+
+    try {
+      const response = await axios.post('http://localhost:8000/api/translate-guidance', {
+        guidance: guidance.raw,
+        target_language: language
+      });
+      setTranslatedGuidance(response.data.translated_guidance);
+      setTranslationLanguage(language);
+    } catch (err) {
+      const errorMessage = err.response?.data?.detail || `Failed to translate to ${language}.`;
+      setTranslationError(errorMessage);
+    } finally {
+      setTranslating(false);
+    }
   };
 
   if (!analysis) {
@@ -190,15 +218,72 @@ function TroubleshootingPage() {
                     <Typography variant="h6" sx={{ fontWeight: 600 }}>
                       {guidance.steps.length} Steps
                     </Typography>
-                    <Button
-                      startIcon={<ContentCopyIcon />}
-                      onClick={handleCopy}
-                      variant="outlined"
-                      size="small"
-                    >
-                      Copy All
-                    </Button>
+                    <Box sx={{ display: 'flex', gap: 1 }}>
+                      <Button
+                        startIcon={<ContentCopyIcon />}
+                        onClick={handleCopy}
+                        variant="outlined"
+                        size="small"
+                      >
+                        Copy All
+                      </Button>
+                      <Button
+                        onClick={() => handleTranslate('tamil')}
+                        disabled={translating}
+                        variant={translationLanguage === 'tamil' ? 'contained' : 'outlined'}
+                        size="small"
+                        sx={{
+                          backgroundColor: translationLanguage === 'tamil' ? '#3498db' : undefined,
+                          color: translationLanguage === 'tamil' ? 'white' : undefined,
+                          '&:hover': {
+                            backgroundColor: translationLanguage === 'tamil' ? '#2980b9' : undefined
+                          }
+                        }}
+                      >
+                        🇮🇳 Tamil
+                      </Button>
+                      <Button
+                        onClick={() => handleTranslate('telugu')}
+                        disabled={translating}
+                        variant={translationLanguage === 'telugu' ? 'contained' : 'outlined'}
+                        size="small"
+                        sx={{
+                          backgroundColor: translationLanguage === 'telugu' ? '#3498db' : undefined,
+                          color: translationLanguage === 'telugu' ? 'white' : undefined,
+                          '&:hover': {
+                            backgroundColor: translationLanguage === 'telugu' ? '#2980b9' : undefined
+                          }
+                        }}
+                      >
+                        🇮🇳 Telugu
+                      </Button>
+                    </Box>
                   </Box>
+
+                  {translationError && (
+                    <Box sx={{ mb: 2, p: 2, backgroundColor: '#ffebee', borderRadius: 1, color: '#c62828' }}>
+                      {translationError}
+                    </Box>
+                  )}
+
+                  {translatedGuidance && translationLanguage ? (
+                    <Box sx={{ mb: 3, p: 2, backgroundColor: '#f0f8ff', borderRadius: 1, border: '1px solid #3498db' }}>
+                      <Typography variant="body2" sx={{ fontWeight: 600, color: '#3498db', mb: 1 }}>
+                        {translationLanguage === 'tamil' ? 'தமிழ் மொழி (Tamil)' : 'తెలుగు (Telugu)'}
+                      </Typography>
+                      <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', mb: 2 }}>
+                        {translatedGuidance}
+                      </Typography>
+                      <Box sx={{ borderTop: '1px solid #ddd', pt: 2 }}>
+                        <Typography variant="body2" sx={{ fontWeight: 600, color: '#666', mb: 1 }}>
+                          English (Original)
+                        </Typography>
+                        <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>
+                          {guidance.raw}
+                        </Typography>
+                      </Box>
+                    </Box>
+                  ) : null}
 
                   <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                     {guidance.steps.map((step, index) => (
