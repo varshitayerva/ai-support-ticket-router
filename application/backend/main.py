@@ -1,13 +1,18 @@
 # main.py
 import os
 import json
-from fastapi import FastAPI, HTTPException
-from enum import Enum
+import re
+import logging
+from fastapi import FastAPI, HTTPException, Request
+from enum import Enum, IntEnum
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from openai import OpenAIError
 from dotenv import load_dotenv
 import asyncio
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 
 # Import new multi-LLM architecture components
 from config.models import get_model_id, list_all_models
@@ -21,6 +26,94 @@ load_dotenv()
 
 # Setup logging
 setup_logging(level="INFO")
+
+# --- Centralized Configuration ---
+class TokenLimits(IntEnum):
+    """Token limits for different LLM endpoints. Prevents excessive API usage."""
+    RELEVANCE_JUDGE = 200
+    ANALYSIS = 150
+    ANALYSIS_JUDGE = 200
+    GUIDANCE = 300
+    EMAIL = 400
+    QUALITY_JUDGE = 350
+
+
+class Config:
+    """Centralized application configuration from environment variables."""
+    MODEL_NAME = os.getenv("MODEL_NAME", "meta-llama/Llama-3.1-8B-Instruct")
+    ALLOWED_ORIGINS = [
+        origin.strip() for origin in os.getenv(
+            "ALLOWED_ORIGINS", "http://localhost:5173"
+        ).split(",")
+    ]
+    API_BASE_URL = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
+    MAX_INPUT_LENGTH = int(os.getenv("MAX_INPUT_LENGTH", "10000"))
+    LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
+
+
+# --- Initialize Rate Limiter ---
+limiter = Limiter(key_func=get_remote_address)
+
+# --- Input Sanitization Helper ---
+def sanitize_user_input(text: str, max_length: int = None) -> str:
+    """Sanitize user input to prevent prompt injection attacks."""
+    if max_length is None:
+        max_length = Config.MAX_INPUT_LENGTH
+
+    if not isinstance(text, str):
+        raise ValueError("Input must be a string")
+
+    if len(text) > max_length:
+        raise ValueError(f"Input exceeds maximum length of {max_length} characters")
+
+    # Remove null bytes that could be used in injection attacks
+    text = text.replace('\x00', '')
+
+    # Log suspicious patterns (multiple consecutive special characters, known injection keywords)
+    suspicious_patterns = [
+        r'ignore[\s\w]*instruction',
+        r'system[\s\w]*prompt',
+        r'bypass[\s\w]*security',
+        r'disregard[\s\w]*previous',
+    ]
+
+    for pattern in suspicious_patterns:
+        if re.search(pattern, text, re.IGNORECASE):
+            llm_logger.logger.warning(f"Suspicious input pattern detected: {pattern}")
+
+    return text.strip()
+
+
+# --- JSON Extraction Helper (DRY Principle) ---
+def extract_json_from_response(response_text: str, field_name: str = "response") -> dict:
+    """
+    Extract and parse JSON object from LLM response that may contain extra text.
+
+    Args:
+        response_text: Raw LLM response containing JSON
+        field_name: Field name for error logging and context
+
+    Returns:
+        Parsed JSON as dict
+
+    Raises:
+        ValueError: If JSON cannot be extracted or parsed
+    """
+    try:
+        json_start_index = response_text.find('{')
+        json_end_index = response_text.rfind('}')
+
+        if json_start_index == -1 or json_end_index == -1:
+            raise ValueError(f"No JSON object found in {field_name} response")
+
+        json_string = response_text[json_start_index : json_end_index + 1]
+        return json.loads(json_string)
+
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Failed to parse JSON in {field_name}: {str(e)}")
+    except ValueError as e:
+        raise ValueError(f"Error processing {field_name}: {str(e)}")
+
 
 # --- Pydantic Models for Strict Data Validation ---
 
@@ -75,18 +168,30 @@ app = FastAPI(
     version="2.0.0"
 )
 
+# Attach rate limiter to app state
+app.state.limiter = limiter
+
 # --- Add Middleware ---
 app.add_middleware(RequestLoggingMiddleware)
 app.add_middleware(LLMErrorHandler)
 
-# --- CORS Middleware ---
+# --- CORS Middleware Configuration ---
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=Config.ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# --- Rate Limiter Error Handler ---
+@app.exception_handler(RateLimitExceeded)
+async def rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded):
+    return {
+        "error": "Too many requests",
+        "message": "Rate limit exceeded. Please try again later.",
+        "status": 429
+    }
 
 # --- Root Endpoint for Health Check ---
 @app.get("/")
@@ -217,9 +322,14 @@ Return ONLY JSON:
 # --- API Endpoints ---
 
 @app.post("/api/judge-relevance", response_model=RelevanceJudgeResponse)
-async def judge_relevance(ticket_request: TicketRequest):
+@limiter.limit("20/minute")
+async def judge_relevance(request: Request, ticket_request: TicketRequest):
     """Validates if the ticket is relevant to the support system using Mistral 7B."""
-    ticket = ticket_request.ticket
+    try:
+        ticket = sanitize_user_input(ticket_request.ticket)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
     llm_service = get_llm_service()
 
     try:
@@ -251,9 +361,14 @@ async def judge_relevance(ticket_request: TicketRequest):
         )
 
 @app.post("/api/analyze", response_model=TicketAnalysis)
-async def analyze_ticket(ticket_request: TicketRequest):
+@limiter.limit("15/minute")
+async def analyze_ticket(request: Request, ticket_request: TicketRequest):
     """Analyzes ticket and returns category, urgency, and sentiment using Mistral 7B."""
-    ticket = ticket_request.ticket
+    try:
+        ticket = sanitize_user_input(ticket_request.ticket)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
     llm_service = get_llm_service()
 
     try:
@@ -286,9 +401,14 @@ async def analyze_ticket(ticket_request: TicketRequest):
         raise HTTPException(status_code=500, detail="AI failed to generate a valid analysis.")
 
 @app.post("/api/guidance")
-async def get_guidance(guidance_request: GuidanceRequest):
+@limiter.limit("15/minute")
+async def get_guidance(request: Request, guidance_request: GuidanceRequest):
     """Generates guidance based on urgency using Qwen 3.6B."""
-    ticket = guidance_request.ticket
+    try:
+        ticket = sanitize_user_input(guidance_request.ticket)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
     analysis = guidance_request.analysis
     llm_service = get_llm_service()
 
@@ -317,11 +437,16 @@ class EmailRequest(BaseModel):
     guidance: str
 
 @app.post("/api/email")
-async def get_email(email_request: EmailRequest):
+@limiter.limit("15/minute")
+async def get_email(request: Request, email_request: EmailRequest):
     """Generates professional customer email using Qwen 3.6B."""
-    ticket = email_request.ticket
+    try:
+        ticket = sanitize_user_input(email_request.ticket)
+        guidance = sanitize_user_input(email_request.guidance)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
     analysis = email_request.analysis
-    guidance = email_request.guidance
     llm_service = get_llm_service()
 
     try:
@@ -351,9 +476,14 @@ class AnalysisJudgeResponse(BaseModel):
     feedback: str
 
 @app.post("/api/judge-analysis", response_model=AnalysisJudgeResponse)
-async def judge_analysis(analysis_judge_request: AnalysisJudgeRequest):
+@limiter.limit("10/minute")
+async def judge_analysis(request: Request, analysis_judge_request: AnalysisJudgeRequest):
     """Validates the ticket analysis using GPT-OSS 120B via Groq."""
-    ticket = analysis_judge_request.ticket
+    try:
+        ticket = sanitize_user_input(analysis_judge_request.ticket)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
     analysis = analysis_judge_request.analysis
     llm_service = get_llm_service()
 
@@ -401,12 +531,17 @@ class JudgeResponse(BaseModel):
     is_approved: bool
 
 @app.post("/api/judge", response_model=JudgeResponse)
-async def judge_response(judge_request: JudgeRequest):
+@limiter.limit("10/minute")
+async def judge_response(request: Request, judge_request: JudgeRequest):
     """Final quality evaluation using GPT-OSS 120B via Groq."""
-    ticket = judge_request.ticket
+    try:
+        ticket = sanitize_user_input(judge_request.ticket)
+        guidance = sanitize_user_input(judge_request.guidance)
+        email = sanitize_user_input(judge_request.finalEmail)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
     analysis = judge_request.analysis
-    guidance = judge_request.guidance
-    email = judge_request.finalEmail
     llm_service = get_llm_service()
 
     try:
