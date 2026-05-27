@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Translation Feature Test</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+        h1 {
+            color: #333;
+            border-bottom: 3px solid #3498db;
+            padding-bottom: 10px;
+        }
+        h2 {
+            color: #555;
+            margin-top: 20px;
+        }
+        button {
+            padding: 10px 20px;
+            margin: 5px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.3s;
+        }
+        .btn-primary {
+            background: #3498db;
+            color: white;
+        }
+        .btn-primary:hover {
+            background: #2980b9;
+        }
+        .btn-tamil {
+            background: #95a5a6;
+            color: white;
+        }
+        .btn-tamil.active {
+            background: #3498db;
+        }
+        .btn-telugu {
+            background: #95a5a6;
+            color: white;
+        }
+        .btn-telugu.active {
+            background: #3498db;
+        }
+        .loading {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+        .error {
+            background: #ffe6e6;
+            color: #c0392b;
+            padding: 12px;
+            border-radius: 4px;
+            margin: 10px 0;
+            border-left: 4px solid #c0392b;
+        }
+        .success {
+            background: #e6ffe6;
+            color: #27ae60;
+            padding: 12px;
+            border-radius: 4px;
+            margin: 10px 0;
+            border-left: 4px solid #27ae60;
+        }
+        pre {
+            background: #f9f9f9;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 15px;
+            overflow-x: auto;
+            font-size: 13px;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        .button-group {
+            display: flex;
+            gap: 10px;
+            margin: 15px 0;
+        }
+        .translation-container {
+            margin-top: 20px;
+        }
+        .lang-label {
+            color: #3498db;
+            font-weight: bold;
+            margin-top: 15px;
+            margin-bottom: 5px;
+        }
+        hr {
+            border: none;
+            border-top: 2px solid #ddd;
+            margin: 20px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🌍 Translation Feature Test Dashboard</h1>
+        <p>Test the Tamil and Telugu translation feature for support ticket troubleshooting steps</p>
+    </div>
+
+    <div class="container">
+        <h2>Step 1: Generate Guidance</h2>
+        <p>First, let's generate guidance for a technical issue.</p>
+        <button class="btn-primary" onclick="generateGuidance()" id="generateBtn">Generate Guidance</button>
+        <div id="guidanceStatus"></div>
+        <pre id="guidanceOutput" style="display:none;"></pre>
+    </div>
+
+    <div class="container">
+        <h2>Step 2: Translate to Tamil & Telugu</h2>
+        <p>Once guidance is generated, use these buttons to translate it:</p>
+
+        <div class="button-group">
+            <button class="btn-tamil" onclick="translateTo('tamil')" id="tamilBtn" disabled>
+                🇮🇳 Translate to Tamil
+            </button>
+            <button class="btn-telugu" onclick="translateTo('telugu')" id="teluguBtn" disabled>
+                🇮🇳 Translate to Telugu
+            </button>
+        </div>
+
+        <div id="translationStatus"></div>
+
+        <div class="translation-container" id="translationContainer" style="display:none;">
+            <div class="lang-label" id="translationLabel"></div>
+            <pre id="translationOutput"></pre>
+            <hr>
+            <div class="lang-label">English (Original)</div>
+            <pre id="originalOutput"></pre>
+        </div>
+    </div>
+
+    <script>
+        let currentGuidance = null;
+        const API_BASE = "http://localhost:8000";
+
+        async function generateGuidance() {
+            const btn = document.getElementById('generateBtn');
+            const statusDiv = document.getElementById('guidanceStatus');
+            const outputDiv = document.getElementById('guidanceOutput');
+
+            btn.disabled = true;
+            btn.classList.add('loading');
+            statusDiv.innerHTML = '<div class="success">⏳ Generating guidance...</div>';
+            outputDiv.style.display = 'none';
+
+            try {
+                // First analyze the ticket
+                const analyzeResponse = await fetch(`${API_BASE}/api/analyze`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        ticket: "My app keeps crashing on startup when I try to open it. I'm getting memory errors."
+                    })
+                });
+
+                const analysis = await analyzeResponse.json();
+                console.log('Analysis:', analysis);
+
+                // Then generate guidance
+                const guidanceResponse = await fetch(`${API_BASE}/api/guidance`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        ticket: "My app keeps crashing on startup when I try to open it. I'm getting memory errors.",
+                        analysis: analysis
+                    })
+                });
+
+                const guidanceData = await guidanceResponse.json();
+                currentGuidance = guidanceData.guidance;
+
+                outputDiv.textContent = currentGuidance;
+                outputDiv.style.display = 'block';
+                statusDiv.innerHTML = '<div class="success">✅ Guidance generated successfully!</div>';
+
+                // Enable translation buttons
+                document.getElementById('tamilBtn').disabled = false;
+                document.getElementById('teluguBtn').disabled = false;
+
+            } catch (error) {
+                statusDiv.innerHTML = `<div class="error">❌ Error: ${error.message}</div>`;
+                console.error('Error:', error);
+            } finally {
+                btn.disabled = false;
+                btn.classList.remove('loading');
+            }
+        }
+
+        async function translateTo(language) {
+            if (!currentGuidance) {
+                alert('Please generate guidance first!');
+                return;
+            }
+
+            const statusDiv = document.getElementById('translationStatus');
+            const containerDiv = document.getElementById('translationContainer');
+            const labelDiv = document.getElementById('translationLabel');
+            const outputDiv = document.getElementById('translationOutput');
+            const originalDiv = document.getElementById('originalOutput');
+
+            const btnId = language === 'tamil' ? 'tamilBtn' : 'teluguBtn';
+            const btn = document.getElementById(btnId);
+            btn.disabled = true;
+            btn.classList.add('loading');
+
+            const langDisplay = language === 'tamil' ? 'Tamil (தமிழ் மொழி)' : 'Telugu (తెలుగు)';
+            statusDiv.innerHTML = `<div class="success">⏳ Translating to ${langDisplay}...</div>`;
+
+            try {
+                const response = await fetch(`${API_BASE}/api/translate-guidance`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        guidance: currentGuidance,
+                        target_language: language
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+
+                const data = await response.json();
+
+                // Update button styles
+                document.getElementById('tamilBtn').classList.remove('active');
+                document.getElementById('teluguBtn').classList.remove('active');
+                document.getElementById(btnId).classList.add('active');
+
+                // Display translation
+                labelDiv.innerHTML = `${language === 'tamil' ? '🇮🇳' : '🇮🇳'} ${langDisplay}`;
+                outputDiv.textContent = data.translated_guidance;
+                originalDiv.textContent = currentGuidance;
+                containerDiv.style.display = 'block';
+                statusDiv.innerHTML = `<div class="success">✅ Translation successful! Confidence: ${(data.confidence * 100).toFixed(0)}%</div>`;
+
+            } catch (error) {
+                statusDiv.innerHTML = `<div class="error">❌ Error: ${error.message}</div>`;
+                console.error('Error:', error);
+            } finally {
+                btn.disabled = false;
+                btn.classList.remove('loading');
+            }
+        }
+    </script>
+</body>
+</html>
